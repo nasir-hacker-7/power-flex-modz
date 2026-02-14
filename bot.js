@@ -249,7 +249,7 @@ async function allocatePhoneNumber(userId, country) {
     );
 
     if (numbers.length === 0) {
-      return { error: `❌ No ${COUNTRY_FLAGS[country]} ${COUNTRY_NAMES[country]} numbers available right now. Please try another country.` };
+      return { error: '❌ Numbers not available. Try another country.' };
     }
 
     const phoneNumber = numbers[0];
@@ -438,17 +438,24 @@ bot.onText(/\/addnumbers (.+)/, async (msg, match) => {
 
   const country = match[1].toUpperCase();
   
-  if (!COUNTRY_FLAGS[country]) {
+  // Accept any 2-3 letter country code
+  if (country.length < 2 || country.length > 3 || !/^[A-Z]+$/.test(country)) {
     await bot.sendMessage(chatId, 
-      `❌ Invalid country code.\n\n` +
-      `Supported countries:\n` +
+      `❌ Invalid country code format.\n\n` +
+      `Use 2 or 3 letter country codes:\n` +
+      `Examples: PK, IN, US, ZW, etc.\n\n` +
+      `Common countries:\n` +
       `${Object.keys(COUNTRY_FLAGS).map(code => `${COUNTRY_FLAGS[code]} ${code} - ${COUNTRY_NAMES[code]}`).join('\n')}`
     );
     return;
   }
 
+  // Get flag and name if available, otherwise use defaults
+  const countryFlag = COUNTRY_FLAGS[country] || '🌍';
+  const countryName = COUNTRY_NAMES[country] || country;
+
   await bot.sendMessage(chatId, 
-    `📝 Adding numbers for ${COUNTRY_FLAGS[country]} ${COUNTRY_NAMES[country]}\n\n` +
+    `📝 Adding numbers for ${countryFlag} ${countryName}\n\n` +
     `Please send phone numbers (one per line):\n\n` +
     `Format:\n` +
     `923366413930\n` +
@@ -487,7 +494,7 @@ bot.onText(/\/addnumbers (.+)/, async (msg, match) => {
         try {
           await connection.query(
             'INSERT INTO phone_numbers (number, country, countryFlag) VALUES (?, ?, ?)',
-            [number, country, COUNTRY_FLAGS[country]]
+            [number, country, countryFlag]
           );
           added++;
         } catch (error) {
@@ -502,7 +509,8 @@ bot.onText(/\/addnumbers (.+)/, async (msg, match) => {
 
       await bot.sendMessage(chatId, 
         `✅ *Numbers Added!*\n\n` +
-        `${COUNTRY_FLAGS[country]} Country: *${COUNTRY_NAMES[country]}*\n\n` +
+        `${countryFlag} Country: *${countryName}*\n` +
+        `Code: ${country}\n\n` +
         `➕ Added: ${added}\n` +
         `⏭️ Skipped (duplicates): ${skipped}\n` +
         `📊 Total processed: ${numbers.length}`,
@@ -657,440 +665,4 @@ bot.onText(/\/stats/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
 
-  if (userId.toString() !== ADMIN_ID) {
-    await bot.sendMessage(chatId, '❌ This command is only for admins.');
-    return;
-  }
-
-  const connection = await pool.getConnection();
-  try {
-    // Get statistics
-    const [totalUsers] = await connection.query('SELECT COUNT(*) as count FROM telegram_users');
-    const [verifiedUsers] = await connection.query('SELECT COUNT(*) as count FROM telegram_users WHERE isVerified = 1');
-    const [totalNumbers] = await connection.query('SELECT COUNT(*) as count FROM phone_numbers');
-    const [availableNumbers] = await connection.query('SELECT COUNT(*) as count FROM phone_numbers WHERE isAvailable = 1 AND deletedAt IS NULL');
-    const [deletedNumbers] = await connection.query('SELECT COUNT(*) as count FROM phone_numbers WHERE deletedAt IS NOT NULL');
-    const [totalOTPRequests] = await connection.query('SELECT COUNT(*) as count FROM otp_logs');
-    const [successfulOTPs] = await connection.query('SELECT COUNT(*) as count FROM otp_logs WHERE status = "success"');
-    
-    // Numbers by country
-    const [numbersByCountry] = await connection.query(
-      'SELECT country, COUNT(*) as count FROM phone_numbers WHERE deletedAt IS NULL GROUP BY country ORDER BY count DESC'
-    );
-
-    let countryStats = '';
-    if (numbersByCountry.length > 0) {
-      countryStats = numbersByCountry.map(row => 
-        `${COUNTRY_FLAGS[row.country] || ''} ${COUNTRY_NAMES[row.country] || row.country}: ${row.count}`
-      ).join('\n');
-    }
-
-    await bot.sendMessage(chatId,
-      `📊 *Bot Statistics*\n\n` +
-      `👥 *Users:*\n` +
-      `Total: ${totalUsers[0].count}\n` +
-      `Verified: ${verifiedUsers[0].count}\n\n` +
-      `📱 *Numbers:*\n` +
-      `Total: ${totalNumbers[0].count}\n` +
-      `Available: ${availableNumbers[0].count}\n` +
-      `Used/Deleted: ${deletedNumbers[0].count}\n\n` +
-      `${countryStats ? '🌍 *By Country:*\n' + countryStats + '\n\n' : ''}` +
-      `📨 *OTP Requests:*\n` +
-      `Total: ${totalOTPRequests[0].count}\n` +
-      `Successful: ${successfulOTPs[0].count}`,
-      { parse_mode: 'Markdown' }
-    );
-
-  } finally {
-    connection.release();
-  }
-});
-
-// Callback query handler
-bot.on('callback_query', async (query) => {
-  const chatId = query.message.chat.id;
-  const userId = query.from.id;
-  const data = query.data;
-  const messageId = query.message.message_id;
-
-  // Message deduplication
-  const dedupKey = `${userId}-${data}`;
-  if (processingMessages.has(dedupKey)) {
-    await bot.answerCallbackQuery(query.id, { text: 'Processing...' });
-    return;
-  }
-
-  processingMessages.set(dedupKey, true);
-  setTimeout(() => processingMessages.delete(dedupKey), MESSAGE_DEDUP_WINDOW);
-
-  try {
-    if (data === 'verify') {
-      const isVerified = await checkUserVerification(userId);
-      
-      if (isVerified) {
-        // Delete old message and send new one with image
-        try {
-          await bot.deleteMessage(chatId, messageId);
-        } catch (e) {}
-
-        const sentMsg = await bot.sendPhoto(chatId, './welcome-image.jpg', {
-          caption: `✅ *Verification successful!*\n\n` +
-            `👋 *Welcome!*`,
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '📱 Get Number', callback_data: 'get_number' }]
-            ]
-          }
-        });
-        userLastMessages.set(userId, sentMsg.message_id);
-
-        const connection = await pool.getConnection();
-        await connection.query(
-          'UPDATE telegram_users SET isVerified = 1 WHERE telegramId = ?',
-          [userId.toString()]
-        );
-        connection.release();
-      } else {
-        await bot.answerCallbackQuery(query.id, {
-          text: '❌ Please join both channels first!',
-          show_alert: true
-        });
-      }
-    }
-
-    else if (data === 'get_number') {
-      const isVerified = await checkUserVerification(userId);
-      
-      if (!isVerified) {
-        await bot.answerCallbackQuery(query.id, {
-          text: '❌ Please verify your membership first!',
-          show_alert: true
-        });
-        return;
-      }
-
-      // Get only countries that have available numbers in database
-      const connection = await pool.getConnection();
-      const [availableCountries] = await connection.query(
-        'SELECT DISTINCT country, countryFlag FROM phone_numbers WHERE isAvailable = 1 AND deletedAt IS NULL ORDER BY country'
-      );
-      connection.release();
-
-      if (availableCountries.length === 0) {
-        await bot.answerCallbackQuery(query.id, {
-          text: '❌ No numbers available right now. Please contact admin.',
-          show_alert: true
-        });
-        return;
-      }
-
-      // Delete old message
-      try {
-        await bot.deleteMessage(chatId, messageId);
-      } catch (e) {}
-
-      // Show countries with image
-      const keyboard = availableCountries.map(country => [
-        { 
-          text: `${country.countryFlag || COUNTRY_FLAGS[country.country]} ${COUNTRY_NAMES[country.country] || country.country}`, 
-          callback_data: `country_${country.country}` 
-        }
-      ]);
-
-      const sentMsg = await bot.sendPhoto(chatId, './welcome-image.jpg', {
-        caption: `🌍 *Select Country*\n` +
-          `Found ${availableCountries.length} countries.`,
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: keyboard }
-      });
-      userLastMessages.set(userId, sentMsg.message_id);
-    }
-
-    else if (data.startsWith('country_')) {
-      const country = data.replace('country_', '');
-      const result = await allocatePhoneNumber(userId, country);
-
-      if (result.error) {
-        await bot.answerCallbackQuery(query.id, {
-          text: result.error,
-          show_alert: true
-        });
-        return;
-      }
-
-      // Delete old message
-      try {
-        await bot.deleteMessage(chatId, messageId);
-      } catch (e) {}
-
-      const phoneNumber = result.phoneNumber;
-      const sentMsg = await bot.sendPhoto(chatId, './welcome-image.jpg', {
-        caption: `📡 *Server:* NUMBER PANEL 🔥\n` +
-          `${COUNTRY_FLAGS[country]} *Country:* ${COUNTRY_NAMES[country]}\n` +
-          `📱 *Number:* \`${phoneNumber.number}\``,
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📨 GET OTP CODE', callback_data: 'check_sms' }],
-            [{ text: '🔄 Change Number', callback_data: `change_number_${country}` }],
-            [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
-          ]
-        }
-      });
-      userLastMessages.set(userId, sentMsg.message_id);
-    }
-
-    else if (data === 'main_menu') {
-      // Delete old message
-      try {
-        await bot.deleteMessage(chatId, messageId);
-      } catch (e) {}
-
-      const sentMsg = await bot.sendPhoto(chatId, './welcome-image.jpg', {
-        caption: `👋 *Welcome!*`,
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📱 Get Number', callback_data: 'get_number' }]
-          ]
-        }
-      });
-      userLastMessages.set(userId, sentMsg.message_id);
-    }
-
-    else if (data.startsWith('change_number_')) {
-      const country = data.replace('change_number_', '');
-      
-      // Release current number
-      const connection = await pool.getConnection();
-      await connection.query(
-        'UPDATE phone_numbers SET isAvailable = 1, assignedToTelegramId = NULL WHERE assignedToTelegramId = ?',
-        [userId.toString()]
-      );
-      await connection.query(
-        'UPDATE telegram_users SET currentPhoneNumberId = NULL WHERE telegramId = ?',
-        [userId.toString()]
-      );
-      connection.release();
-
-      // Allocate new number from same country
-      const result = await allocatePhoneNumber(userId, country);
-
-      if (result.error) {
-        await bot.answerCallbackQuery(query.id, {
-          text: result.error,
-          show_alert: true
-        });
-        return;
-      }
-
-      // Delete old message
-      try {
-        await bot.deleteMessage(chatId, messageId);
-      } catch (e) {}
-
-      const phoneNumber = result.phoneNumber;
-      const sentMsg = await bot.sendPhoto(chatId, './welcome-image.jpg', {
-        caption: `📡 *Server:* NUMBER PANEL 🔥\n` +
-          `${COUNTRY_FLAGS[country]} *Country:* ${COUNTRY_NAMES[country]}\n` +
-          `📱 *Number:* \`${phoneNumber.number}\``,
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📨 GET OTP CODE', callback_data: 'check_sms' }],
-            [{ text: '🔄 Change Number', callback_data: `change_number_${country}` }],
-            [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
-          ]
-        }
-      });
-      userLastMessages.set(userId, sentMsg.message_id);
-    }
-
-    else if (data === 'check_sms') {
-      await bot.answerCallbackQuery(query.id, { text: '📨 Checking for SMS...' });
-
-      const connection = await pool.getConnection();
-      const [users] = await connection.query(
-        'SELECT u.*, p.number, p.country, p.countryFlag FROM telegram_users u ' +
-        'LEFT JOIN phone_numbers p ON u.currentPhoneNumberId = p.id ' +
-        'WHERE u.telegramId = ?',
-        [userId.toString()]
-      );
-      connection.release();
-
-      if (users.length === 0 || !users[0].number) {
-        await bot.answerCallbackQuery(query.id, {
-          text: '❌ No number assigned. Please get a number first.',
-          show_alert: true
-        });
-        return;
-      }
-
-      const phoneNumber = users[0].number;
-      const country = users[0].country;
-      const countryFlag = users[0].countryFlag || COUNTRY_FLAGS[country];
-      const countryName = COUNTRY_NAMES[country] || country;
-
-      const otpResult = await fetchOTP(phoneNumber);
-
-      // Delete old message
-      try {
-        await bot.deleteMessage(chatId, messageId);
-      } catch (e) {}
-
-      if (otpResult.error) {
-        // Show "No OTP found yet" status with image
-        try {
-          const sentMsg = await bot.sendPhoto(chatId, './welcome-image.jpg', {
-            caption: `📡 *Server:* NUMBER PANEL 🔥\n` +
-              `${countryFlag} *Country:* ${countryName}\n` +
-              `📱 *Number:* \`${phoneNumber}\`\n` +
-              `⚠️ *Status:* No OTP found yet.`,
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: '📨 GET OTP CODE', callback_data: 'check_sms' }],
-                [{ text: '🔄 Change Number', callback_data: `change_number_${country}` }],
-                [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
-              ]
-            }
-          });
-          userLastMessages.set(userId, sentMsg.message_id);
-        } catch (imgError) {
-          // Fallback to text-only if image fails
-          console.error('Image send failed, using text fallback:', imgError.message);
-          const sentMsg = await bot.sendMessage(chatId,
-            `📡 *Server:* NUMBER PANEL 🔥\n` +
-            `${countryFlag} *Country:* ${countryName}\n` +
-            `📱 *Number:* \`${phoneNumber}\`\n` +
-            `⚠️ *Status:* No OTP found yet.`,
-            {
-              parse_mode: 'Markdown',
-              reply_markup: {
-                inline_keyboard: [
-                  [{ text: '📨 GET OTP CODE', callback_data: 'check_sms' }],
-                  [{ text: '🔄 Change Number', callback_data: `change_number_${country}` }],
-                  [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
-                ]
-              }
-            }
-          );
-          userLastMessages.set(userId, sentMsg.message_id);
-        }
-
-        // Log failed attempt
-        const connection2 = await pool.getConnection();
-        await connection2.query(
-          'INSERT INTO otp_logs (telegramId, phoneNumber, status) VALUES (?, ?, ?)',
-          [userId.toString(), phoneNumber, 'failed']
-        );
-        connection2.release();
-        
-        return;
-      }
-
-      // Log successful OTP request
-      const connection2 = await pool.getConnection();
-      await connection2.query(
-        'INSERT INTO otp_logs (telegramId, phoneNumber, otpCode, status) VALUES (?, ?, ?, ?)',
-        [userId.toString(), phoneNumber, otpResult.otp, 'success']
-      );
-      await connection2.query(
-        'UPDATE telegram_users SET totalOtpRequests = totalOtpRequests + 1 WHERE telegramId = ?',
-        [userId.toString()]
-      );
-      await connection2.query(
-        'UPDATE phone_numbers SET usageCount = usageCount + 1, lastUsedAt = NOW() WHERE number = ?',
-        [phoneNumber]
-      );
-      
-      // AUTO-DELETE: Mark number as deleted after successful OTP
-      await connection2.query(
-        'UPDATE phone_numbers SET deletedAt = NOW(), isAvailable = 0 WHERE number = ?',
-        [phoneNumber]
-      );
-      console.log(`🗑️ Auto-deleted number ${phoneNumber} after successful OTP`);
-      
-      // Clear user's assigned number
-      await connection2.query(
-        'UPDATE telegram_users SET currentPhoneNumberId = NULL WHERE telegramId = ?',
-        [userId.toString()]
-      );
-      
-      connection2.release();
-
-      // Send OTP with nice formatting and image
-      try {
-        const sentMsg = await bot.sendPhoto(chatId, './welcome-image.jpg', {
-          caption: `📡 *Server:* NUMBER PANEL 🔥\n` +
-            `${countryFlag} *Country:* ${countryName}\n` +
-            `📱 *Number:* \`${phoneNumber}\`\n\n` +
-            `🔐 *OTP CODE:* \`${otpResult.otp}\`\n\n` +
-            `_Click on the OTP code to copy it_`,
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '📨 GET OTP CODE', callback_data: 'check_sms' }],
-              [{ text: '🔄 Change Number', callback_data: `change_number_${country}` }],
-              [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
-            ]
-          }
-        });
-        userLastMessages.set(userId, sentMsg.message_id);
-      } catch (imgError) {
-        // Fallback to text-only if image fails
-        console.error('Image send failed, using text fallback:', imgError.message);
-        const sentMsg = await bot.sendMessage(chatId,
-          `📡 *Server:* NUMBER PANEL 🔥\n` +
-          `${countryFlag} *Country:* ${countryName}\n` +
-          `📱 *Number:* \`${phoneNumber}\`\n\n` +
-          `🔐 *OTP CODE:* \`${otpResult.otp}\`\n\n` +
-          `_Click on the OTP code to copy it_`,
-          {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: '📨 GET OTP CODE', callback_data: 'check_sms' }],
-                [{ text: '🔄 Change Number', callback_data: `change_number_${country}` }],
-                [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
-              ]
-            }
-          }
-        );
-        userLastMessages.set(userId, sentMsg.message_id);
-      }
-    }
-
-    await bot.answerCallbackQuery(query.id);
-  } catch (error) {
-    console.error('Callback query error:', error);
-    await bot.answerCallbackQuery(query.id, {
-      text: '❌ An error occurred. Please try again.',
-      show_alert: true
-    });
-  }
-});
-
-// Start bot
-async function startBot() {
-  try {
-    await initDatabase();
-    console.log('🤖 Bot started successfully!');
-    console.log('Bot username:', (await bot.getMe()).username);
-  } catch (error) {
-    console.error('Failed to start bot:', error);
-    process.exit(1);
-  }
-}
-
-startBot();
-
-// Error handling
-bot.on('polling_error', (error) => {
-  console.error('Polling error:', error);
-});
-
-process.on('unhandledRejection', (error) => {
-  console.error('Unhandled rejection:', error);
-});
+  if (userId
