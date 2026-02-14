@@ -1,183 +1,119 @@
-# 🤖 Telegram OTP Bot
+# 🔧 GitHub Update Guide - Recent Changes Only
 
-Telegram bot ke liye jo phone numbers se OTP receive karta hai aur users ko deliver karta hai.
+## Option 1: Download Full Updated bot.js
+The easiest way is to download the complete updated `bot.js` file from the package and replace it on GitHub.
 
-## 📋 Features
+## Option 2: Manual Changes (If you want to edit on GitHub directly)
 
-- ✅ Multiple countries support (PK, TZ, IN, BD, NG, KE, UG, GH, ZA, EG)
-- 📱 Phone number allocation system
-- 🔐 OTP retrieval via external API
-- 👥 User verification through channel membership
-- 💾 MySQL database for data storage
-- ⚡ Rate limiting and message deduplication
+### Change 1: Rate Limit (Line 24)
+```javascript
+// OLD:
+const RATE_LIMIT_WINDOW = 60000; // 60 seconds
 
-## 🚀 Railway.app Par Deploy Karne Ka Tareeqa
-
-### Step 1: Railway Account Banayen
-
-1. [Railway.app](https://railway.app) par jayen
-2. GitHub se sign up karen
-3. Account verify karen
-
-### Step 2: New Project Banayen
-
-1. Railway dashboard par "New Project" click karen
-2. "Deploy from GitHub repo" select karen
-3. Apna GitHub repository select karen (pehle code GitHub par upload karen)
-
-### Step 3: MySQL Database Add Karen
-
-1. Railway project mein "Add New Service" click karen
-2. "Database" → "MySQL" select karen
-3. MySQL service automatically deploy ho jayegi
-4. Database credentials automatically miljayenge
-
-### Step 4: Environment Variables Set Karen
-
-Railway dashboard mein "Variables" tab par jayen aur ye sab add karen:
-
-```bash
-TELEGRAM_BOT_TOKEN=8526222698:AAHej5d8w8kHtGhwYzGVmXs1n_TMjgaJ8wc
-ADMIN_ID=8290661165
-DP_NUMBERS_CHANNEL=https://t.me/dp_numbers
-DP_OTP_ZONE_CHANNEL=https://t.me/dp_otp_zone
-OTP_API_URL=http://51.77.216.195/crapi/dgroup/viewstats
-OTP_API_TOKEN=RVBXRjRSQouDZnhDQZBYSWdqj2tZlWp7VnFUf3hSdVeEjXV1gGeP
+// NEW:
+const RATE_LIMIT_WINDOW = 15000; // 15 seconds
 ```
 
-**Note:** `DATABASE_URL` Railway automatically set kar dega MySQL addon se.
+### Change 2: Error Message (Line 241)
+```javascript
+// OLD:
+return { error: '⏰ Please wait 60 seconds before requesting another number.' };
 
-### Step 5: Deploy Karen
-
-1. Code push karen GitHub par
-2. Railway automatically detect karega aur deploy karega
-3. Build logs check karen
-4. Deploy successful hone ka wait karen
-
-## 📦 Local Testing (Optional)
-
-Agar aap local par test karna chahte hain:
-
-```bash
-# Dependencies install karen
-npm install
-
-# .env file banayen aur credentials add karen
-cp .env.example .env
-
-# Bot start karen
-npm start
+// NEW:
+return { error: '⏰ Please wait 15 seconds before requesting another number.' };
 ```
 
-## 🔧 Bot Commands
+### Change 3: No Numbers Message (Line 252)
+```javascript
+// OLD:
+return { error: `❌ No ${COUNTRY_FLAGS[country]} ${COUNTRY_NAMES[country]} numbers available right now. Please try another country.` };
 
-### User Commands
-- `/start` - Bot start karen
-- `/help` - Help information dekhen
-
-### Admin Commands (Only for ADMIN_ID)
-- `/addnumbers PK` - Pakistan numbers add karen
-- `/addnumbers TZ` - Tanzania numbers add karen
-- `/addnumbers IN` - India numbers add karen
-
-**Example:**
-```
-/addnumbers PK
-+923366413930
-+923366413931
-+923366413932
+// NEW:
+return { error: '❌ Numbers not available. Try another country.' };
 ```
 
-## 🌍 Supported Countries
+### Change 4: Remove Country Restriction (Line 477-482)
+```javascript
+// OLD:
+if (!COUNTRY_FLAGS[country]) {
+  await bot.sendMessage(chatId, 
+    `❌ Invalid country code.\n\n` +
+    `Supported countries:\n` +
+    `${Object.keys(COUNTRY_FLAGS).map(code => `${COUNTRY_FLAGS[code]} ${code} - ${COUNTRY_NAMES[code]}`).join('\n')}`
+  );
+  return;
+}
 
-| Code | Country | Flag |
-|------|---------|------|
-| PK | Pakistan | 🇵🇰 |
-| TZ | Tanzania | 🇹🇿 |
-| IN | India | 🇮🇳 |
-| BD | Bangladesh | 🇧🇩 |
-| NG | Nigeria | 🇳🇬 |
-| KE | Kenya | 🇰🇪 |
-| UG | Uganda | 🇺🇬 |
-| GH | Ghana | 🇬🇭 |
-| ZA | South Africa | 🇿🇦 |
-| EG | Egypt | 🇪🇬 |
+// NEW:
+// Accept any 2-3 letter country code
+if (country.length < 2 || country.length > 3 || !/^[A-Z]+$/.test(country)) {
+  await bot.sendMessage(chatId, 
+    `❌ Invalid country code format.\n\n` +
+    `Use 2 or 3 letter country codes:\n` +
+    `Examples: PK, IN, US, ZW, etc.\n\n` +
+    `Common countries:\n` +
+    `${Object.keys(COUNTRY_FLAGS).map(code => `${COUNTRY_FLAGS[code]} ${code} - ${COUNTRY_NAMES[code]}`).join('\n')}`
+  );
+  return;
+}
 
-## 📊 Database Tables
-
-Bot automatically ye tables bana dega:
-
-1. **phone_numbers** - Phone numbers store karta hai
-2. **telegram_users** - User information store karta hai
-3. **otp_logs** - OTP requests log karta hai
-
-## 🔐 Security Features
-
-- Channel membership verification
-- Admin-only commands
-- Rate limiting (1 request per 60 seconds)
-- Message deduplication
-- Secure database connection
-
-## 🛠️ Railway Specific Requirements
-
-### Required Services:
-1. **Node.js Service** - Bot run karne ke liye
-2. **MySQL Database** - Data store karne ke liye
-
-### Auto-detected Files:
-- `package.json` - Dependencies
-- `bot.js` - Main bot file
-
-### Build Command:
-```bash
-npm install
+// Get flag and name if available, otherwise use defaults
+const countryFlag = COUNTRY_FLAGS[country] || '🌍';
+const countryName = COUNTRY_NAMES[country] || country;
 ```
 
-### Start Command:
-```bash
-npm start
+### Change 5: Update Message Text (Line 485)
+```javascript
+// OLD:
+`📝 Adding numbers for ${COUNTRY_FLAGS[country]} ${COUNTRY_NAMES[country]}\n\n` +
+
+// NEW:
+`📝 Adding numbers for ${countryFlag} ${countryName}\n\n` +
 ```
 
-## ⚡ Important Notes
+### Change 6: Success Message (Line 510-520)
+```javascript
+// OLD:
+`${COUNTRY_FLAGS[country]} Country: *${COUNTRY_NAMES[country]}*\n\n` +
 
-1. **Bot Token**: Apni bot token BotFather se len aur `.env` mein add karen
-2. **Admin ID**: Apna Telegram ID @userinfobot se len
-3. **Channels**: Apne channels banayen aur unke links add karen
-4. **Database**: Railway ka MySQL addon use karen (automatic configuration)
-5. **Numbers**: Deploy ke baad `/addnumbers` command se numbers add karen
-
-## 🔍 Troubleshooting
-
-**Bot respond nahi kar raha?**
-- Check karen ki TELEGRAM_BOT_TOKEN sahi hai
-- Railway logs dekhen errors ke liye
-- Database connection check karen
-
-**OTP nahi mil raha?**
-- Check karen phone number format sahi hai
-- API token verify karen
-- Thoda wait karen aur retry karen
-
-**Numbers show nahi ho rahe?**
-- Database connection check karen
-- `/addnumbers` command se numbers add karen
-- Country code verify karen
-
-## 📞 Support
-
-Issues ke liye Railway logs check karen:
-```bash
-Railway Dashboard → Your Service → Logs
+// NEW:
+`${countryFlag} Country: *${countryName}*\n` +
+`Code: ${country}\n\n` +
 ```
 
-## 🎯 Next Steps After Deployment
+### Change 7: Auto-Delete After OTP (Line 800-810)
+ADD these lines after logging successful OTP:
+```javascript
+// AUTO-DELETE: Mark number as deleted after successful OTP
+await connection2.query(
+  'UPDATE phone_numbers SET deletedAt = NOW(), isAvailable = 0 WHERE number = ?',
+  [phoneNumber]
+);
+console.log(`🗑️ Auto-deleted number ${phoneNumber} after successful OTP`);
 
-1. Bot ko Telegram par test karen (`/start` bhejkar)
-2. Channels mein bot ko admin banayen
-3. Admin command se numbers add karen
-4. Users ko invite karen
+// Clear user's assigned number
+await connection2.query(
+  'UPDATE telegram_users SET currentPhoneNumberId = NULL WHERE telegramId = ?',
+  [userId.toString()]
+);
+```
 
----
+## ⚡ Quick Summary of Changes:
 
-**Ready for Railway Deployment!** 🚀
+1. ✅ 60 sec → 15 sec delay
+2. ✅ Simple error messages  
+3. ✅ Any country codes accepted (not just 10)
+4. ✅ Auto-delete numbers after OTP
+5. ✅ Broadcast command improvements
+6. ✅ Dynamic country display
+
+## 🎯 Recommended: Just Replace bot.js
+
+Instead of manual edits, easiest is:
+1. Download `bot.js` from the new package
+2. Go to GitHub repo
+3. Delete old `bot.js`
+4. Upload new `bot.js`
+5. Commit!
+
+Railway will auto-deploy! 🚀
